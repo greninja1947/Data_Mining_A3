@@ -38,7 +38,7 @@ mkdir -p "$MODEL_DIR" "$OUTPUT_DIR"
 
 # ── Conda env ─────────────────────────────────────────────────────────────────
 CONDA_ENV="ml"
-RUN="conda run -n ${CONDA_ENV} python"
+RUN="conda run --no-capture-output -n ${CONDA_ENV} python"
 
 echo "======================================================"
 echo "  Part        : ${PART}"

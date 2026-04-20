@@ -15,6 +15,7 @@ import time
 
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from load_dataset import load_dataset
 from models import GATv2NodeClassifier
@@ -37,9 +38,11 @@ def train(args):
     data.x = (data.x - x_mean) / x_std
 
     num_classes = ds.num_classes
+    # hidden=8 per head × 8 heads = 64-dim hidden (standard GAT/Cora config).
+    # 256×8=2048-dim causes 6.9M params vs 140 training nodes → severe overfit.
     model = GATv2NodeClassifier(
         in_channels=data.x.shape[1],
-        hidden=256,
+        hidden=8,
         heads=8,
         num_classes=num_classes,
         dropout=0.6,
@@ -57,6 +60,9 @@ def train(args):
     t0 = time.time()
 
     epoch = 0
+    pbar = tqdm(total=int(args.time_limit), desc="Training A", unit="s",
+                bar_format="{l_bar}{bar}| {n:.0f}/{total}s [{elapsed}<{remaining}] {postfix}")
+
     while True:
         elapsed = time.time() - t0
         if elapsed >= args.time_limit:
@@ -65,14 +71,15 @@ def train(args):
         model.train()
         optimizer.zero_grad()
         out  = model(data.x, data.edge_index)                        # [N, C]
-        loss = F.cross_entropy(
-            out[train_idx], data.y[data.train_mask],
-            label_smoothing=0.1,
-        )
+        loss = F.cross_entropy(out[train_idx], data.y[data.train_mask])
         loss.backward()
         optimizer.step()
         scheduler.step()
         epoch += 1
+
+        # update bar to current elapsed seconds
+        pbar.n = min(elapsed, args.time_limit)
+        pbar.refresh()
 
         if epoch % 10 == 0:
             model.eval()
@@ -85,10 +92,12 @@ def train(args):
                 best_val_acc = val_acc
                 best_state   = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
-            print(f"Epoch {epoch:5d} | loss {loss.item():.4f} | "
-                  f"val_acc {val_acc:.4f} | best {best_val_acc:.4f} | "
-                  f"elapsed {elapsed:.1f}s")
+            pbar.set_postfix(epoch=epoch, loss=f"{loss.item():.4f}",
+                             val=f"{val_acc:.4f}", best=f"{best_val_acc:.4f}")
 
+    pbar.n = args.time_limit
+    pbar.refresh()
+    pbar.close()
     print(f"\nTraining done. Best val acc: {best_val_acc:.4f}")
 
     # Restore best weights for saving
