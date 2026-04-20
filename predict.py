@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from load_dataset import COL761NodeDataset, COL761LinkDataset, load_dataset, _load_edge_list
+import models  # noqa: F401 — registers model classes so torch.load can unpickle them
 
 
 # ─────────────────────────────────────────────────────────────────────────────
