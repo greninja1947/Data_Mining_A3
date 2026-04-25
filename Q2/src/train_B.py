@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import argparse
@@ -11,11 +9,10 @@ import torch
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 from torch_geometric.data import Data
-from torch_geometric.loader import NeighborLoader
+from torch_geometric.loader import RandomNodeLoader
 
 from load_dataset import load_dataset
-from model_B import ResidualGNN  
-
+from model_B import ResidualGNN
 
 
 def pick_device(force_cpu: bool) -> torch.device:
@@ -29,7 +26,6 @@ def pick_device(force_cpu: bool) -> torch.device:
 
 
 def build_training_data(raw: Data) -> tuple[Data, torch.Tensor, torch.Tensor]:
-    """Dense y over all N nodes (unlabeled = -1) for NeighborLoader."""
     n = int(raw.num_nodes)
     y_full = torch.full((n,), -1, dtype=torch.long)
     y_full[raw.labeled_nodes] = raw.y.long()
@@ -37,10 +33,15 @@ def build_training_data(raw: Data) -> tuple[Data, torch.Tensor, torch.Tensor]:
     train_idx = raw.labeled_nodes[raw.train_mask]
     val_idx   = raw.labeled_nodes[raw.val_mask]
 
+    # is_train mask lets RandomNodeLoader batches identify seed nodes
+    is_train = torch.zeros(n, dtype=torch.bool)
+    is_train[train_idx] = True
+
     data = Data(
         x=raw.x.float(),
         edge_index=raw.edge_index.contiguous(),
         y=y_full,
+        is_train=is_train,
         num_nodes=n,
     )
     return data, train_idx, val_idx
@@ -60,41 +61,17 @@ def evaluate_auc(
     data: Data,
     node_idx: torch.Tensor,
     device: torch.device,
-    infer_batch_size: int,
-    full_graph_eval: bool,
 ) -> float:
     model.eval()
-
-    if full_graph_eval:
-        x  = data.x.to(device, non_blocking=True)
-        ei = data.edge_index.to(device, non_blocking=True)
-        logits = model(x, ei).squeeze(-1)
-        scores = logits[node_idx].detach().cpu().numpy()
-        labels = data.y[node_idx].cpu().numpy()
-        del x, ei, logits
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
-        return float(roc_auc_score(labels, scores))
-
-    y_true_all: list[np.ndarray] = []
-    y_score_all: list[np.ndarray] = []
-    loader = NeighborLoader(
-        data,
-        num_neighbors=[25, 15],
-        batch_size=infer_batch_size,
-        input_nodes=node_idx,
-        shuffle=False,
-        num_workers=0,
-    )
-    for batch in loader:
-        batch = batch.to(device, non_blocking=True)
-        out   = model(batch.x, batch.edge_index).squeeze(-1)
-        seeds = out[: batch.batch_size]
-        y_true_all.append(batch.y[: batch.batch_size].cpu().numpy())
-        y_score_all.append(seeds.detach().cpu().numpy())
-
-    return float(roc_auc_score(np.concatenate(y_true_all), np.concatenate(y_score_all)))
-
+    x  = data.x.to(device, non_blocking=True)
+    ei = data.edge_index.to(device, non_blocking=True)
+    logits = model(x, ei).squeeze(-1)
+    scores = logits[node_idx].detach().cpu().numpy()
+    labels = data.y[node_idx].cpu().numpy()
+    del x, ei, logits
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    return float(roc_auc_score(labels, scores))
 
 
 def main(argv=None) -> None:
@@ -114,8 +91,7 @@ def main(argv=None) -> None:
     p.add_argument("--weight_decay",    type=float, default=0.0)
     p.add_argument("--batch_size",      type=int,   default=2048)
     p.add_argument("--eval_batch_size", type=int,   default=8192)
-    p.add_argument("--num_neighbors",   type=int, nargs="+", default=[15, 10, 10, 10])
-    p.add_argument("--num_workers",     type=int,   default=4)
+    p.add_argument("--num_workers",     type=int,   default=0)
     p.add_argument("--eval_every",      type=int,   default=1)
     p.add_argument("--max_epochs",      type=int,   default=10_000)
 
@@ -144,7 +120,6 @@ def main(argv=None) -> None:
     print(f"[setup] train_nodes={train_idx.numel():,}  val_nodes={val_idx.numel():,}",
           flush=True)
 
-
     train_labels = data.y[train_idx].float()
     pos = float(train_labels.sum())
     neg = float(train_labels.numel() - pos)
@@ -154,19 +129,13 @@ def main(argv=None) -> None:
 
     mean, std = compute_feature_stats(data.x)
 
-    fanout = list(args.num_neighbors)
-    if len(fanout) < args.num_layers:
-        fanout += [fanout[-1]] * (args.num_layers - len(fanout))
-    fanout = fanout[: args.num_layers]
-
-    train_loader = NeighborLoader(
+    # num_parts so each partition has ~batch_size nodes
+    num_parts = max(1, data.num_nodes // args.batch_size)
+    train_loader = RandomNodeLoader(
         data,
-        num_neighbors=fanout,
-        batch_size=args.batch_size,
-        input_nodes=train_idx,
+        num_parts=num_parts,
         shuffle=True,
         num_workers=args.num_workers,
-        persistent_workers=args.num_workers > 0,
     )
 
     model = ResidualGNN(
@@ -190,7 +159,6 @@ def main(argv=None) -> None:
 
     best_auc   = -1.0
     best_epoch = -1
-    full_graph_eval = (device.type == "cuda")
 
     def budget_left() -> float:
         return args.time_limit - (time.time() - t0)
@@ -219,15 +187,19 @@ def main(argv=None) -> None:
                     stopped_reason = "time_limit"
                     break
                 batch = batch.to(device, non_blocking=True)
+                mask  = batch.is_train
+                if not mask.any():
+                    continue
                 optimizer.zero_grad()
                 out    = model(batch.x, batch.edge_index).squeeze(-1)
-                logits = out[: batch.batch_size]
-                target = batch.y[: batch.batch_size].float()
+                logits = out[mask]
+                target = batch.y[mask].float()
                 loss   = criterion(logits, target)
                 loss.backward()
                 optimizer.step()
-                total_loss += float(loss) * batch.batch_size
-                total_n    += batch.batch_size
+                n_train = int(mask.sum())
+                total_loss += loss.item() * n_train
+                total_n    += n_train
 
             print(f"[epoch {epoch:04d}] loss={total_loss/max(total_n,1):.4f}  "
                   f"ep={time.time()-t_ep:.1f}s  "
@@ -239,17 +211,14 @@ def main(argv=None) -> None:
 
             if epoch % args.eval_every == 0 or budget_left() <= 0:
                 try:
-                    auc = evaluate_auc(model, data, val_idx, device,
-                                       args.eval_batch_size, full_graph_eval)
+                    auc = evaluate_auc(model, data, val_idx, device)
+                    print(f"[val ] AUC={auc:.4f}  best={best_auc:.4f}@{best_epoch}",
+                          flush=True)
+                    if auc > best_auc:
+                        save_best(auc, epoch)
                 except torch.cuda.OutOfMemoryError:
                     torch.cuda.empty_cache()
-                    full_graph_eval = False
-                    auc = evaluate_auc(model, data, val_idx, device,
-                                       args.eval_batch_size, False)
-                print(f"[val ] AUC={auc:.4f}  best={best_auc:.4f}@{best_epoch}",
-                      flush=True)
-                if auc > best_auc:
-                    save_best(auc, epoch)
+                    print("[val ] OOM during eval — skipping", flush=True)
 
     except KeyboardInterrupt:
         stopped_reason = "keyboard_interrupt"

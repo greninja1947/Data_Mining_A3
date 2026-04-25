@@ -51,7 +51,7 @@ def _train_b(args: argparse.Namespace) -> None:
         "--data_dir",  args.data_dir,
         "--model_dir", args.model_dir,
         "--kerberos",  args.kerberos,
-        "--time_limit", "3600.0",
+        "--time_limit", "5400.0",
     ]
     train_B.main(b_argv)
 
