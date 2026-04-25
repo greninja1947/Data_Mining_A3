@@ -9,22 +9,16 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 import time
 
 import numpy as np
 import torch
 from tqdm import tqdm
 
-_here = os.path.dirname(os.path.abspath(__file__))
-if _here not in sys.path:
-    sys.path.insert(0, _here)
+from load_dataset import load_dataset
+from model_C import LinkPredictor 
 
-from load_dataset import load_dataset  # noqa: E402
-from model_C import LinkPredictor  # noqa: E402
 
-# Best config selected from grid search:
-# hidden=256, num_layers=2, lr=1e-3, dropout=0.2, weight_decay=0.0, neg_mode=mixed
 DEFAULT_HIDDEN = 256
 DEFAULT_NUM_LAYERS = 2
 DEFAULT_DROPOUT = 0.2
@@ -33,9 +27,7 @@ DEFAULT_WEIGHT_DECAY = 0.0
 DEFAULT_NEG_MODE = "mixed"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Utilities
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 def pick_device(force_cpu: bool) -> torch.device:
     if force_cpu:
@@ -49,12 +41,10 @@ def pick_device(force_cpu: bool) -> torch.device:
 
 def sample_random_neg(num_nodes: int, num_samples: int,
                       pos_set: set, device: torch.device) -> torch.Tensor:
-    """Uniform random negative edge sampling that skips known positives."""
     out = torch.empty((num_samples, 2), dtype=torch.long)
     i = 0
     while i < num_samples:
         remaining = num_samples - i
-        # oversample then filter; 1.5x is plenty given sparsity
         candidates = torch.randint(0, num_nodes, (int(remaining * 1.5) + 8, 2))
         for u, v in candidates.tolist():
             if u == v or (u, v) in pos_set or (v, u) in pos_set:
@@ -67,7 +57,6 @@ def sample_random_neg(num_nodes: int, num_samples: int,
 
 
 def hits_at_k(pos_scores: torch.Tensor, neg_scores: torch.Tensor, k: int) -> float:
-    """Matches evaluate.py::hits_at_k. Strict > for tie-breaking."""
     n_neg_higher = (neg_scores > pos_scores.unsqueeze(1)).sum(dim=1)
     return (n_neg_higher < k).float().mean().item()
 
@@ -77,14 +66,12 @@ def evaluate_val(model: LinkPredictor, x: torch.Tensor, edge_index: torch.Tensor
                  valid_pos: torch.Tensor, valid_neg: torch.Tensor,
                  device: torch.device, k: int = 50,
                  chunk: int = 5000) -> tuple[float, float]:
-    """Return (hits@k, mean pos-score) on validation set."""
     model.eval()
     z = model.encode(x, edge_index)
 
     pos_scores = model.decode(z, valid_pos.to(device))  # [P]
     P, K, _ = valid_neg.shape
     flat = valid_neg.view(P * K, 2).to(device)
-    # chunk the decoder over the flattened pairs to stay memory-safe
     neg_scores_parts = []
     for i in range(0, flat.shape[0], chunk):
         neg_scores_parts.append(model.decode(z, flat[i:i + chunk]))
@@ -94,9 +81,6 @@ def evaluate_val(model: LinkPredictor, x: torch.Tensor, edge_index: torch.Tensor
     return float(h), float(pos_scores.mean().item())
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────────────────────────────────────
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
@@ -105,12 +89,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--kerberos", default="cs1230216")
     p.add_argument("--time_limit", type=float, default=60.0)
 
-    # model
     p.add_argument("--hidden", type=int, default=DEFAULT_HIDDEN)
     p.add_argument("--num_layers", type=int, default=DEFAULT_NUM_LAYERS)
     p.add_argument("--dropout", type=float, default=DEFAULT_DROPOUT)
 
-    # optimization
     p.add_argument("--lr", type=float, default=DEFAULT_LR)
     p.add_argument("--weight_decay", type=float, default=DEFAULT_WEIGHT_DECAY)
     p.add_argument("--max_epochs", type=int, default=10_000)
@@ -121,7 +103,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--min_improve", type=float, default=0.0)
     p.add_argument("--log_every", type=int, default=0)
 
-    # infra
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--force_cpu", action="store_true")
     return p
@@ -164,17 +145,14 @@ def main(argv: list[str] | None = None) -> None:
           f"valid_pos={valid_pos.shape[0]}  valid_neg={valid_neg.shape[0]}x{valid_neg.shape[1]}",
           flush=True)
 
-    # normalization stats
     mean = x.mean(dim=0)
     std = x.std(dim=0)
 
-    # move tensors to device
     x_dev = x.to(device)
     ei_dev = edge_index.to(device)
     train_pos_dev = train_pos.to(device)
     train_neg_dev = train_neg.to(device) if train_neg is not None else None
 
-    # set of known positives for random neg filtering
     pos_set = set()
     for u, v in train_pos.tolist():
         pos_set.add((u, v))
@@ -265,7 +243,6 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 neg_edges_list.append(sampled)
             if not neg_edges_list:
-                # fall back to random if given was requested but absent
                 sampled = sample_random_neg(
                     num_nodes, train_pos.shape[0], pos_set, device
                 )

@@ -1,4 +1,3 @@
-import argparse
 import os
 import time
 
@@ -122,27 +121,4 @@ def train(args):
     save_model(model, args)
 
 
-def build_parser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", required=True)
-    parser.add_argument("--model_dir", default="models")
-    parser.add_argument("--kerberos", default="cs1230459")
-    parser.add_argument("--time_limit", type=float, default=300)
-    parser.add_argument("--hidden", type=int, default=16)
-    parser.add_argument("--heads", type=int, default=4)
-    parser.add_argument("--dropout", type=float, default=0.6)
-    parser.add_argument("--lr", type=float, default=0.005)
-    parser.add_argument("--wd", type=float, default=0.001)
-    parser.add_argument("--t_max", type=int, default=1000)
-    parser.add_argument("--drop_edge", type=float, default=0.2)
-    parser.add_argument("--optimizer", default="adam", choices=["adam", "adamw"])
-    return parser
 
-
-def main():
-    args = build_parser().parse_args()
-    train(args)
-
-
-if __name__ == "__main__":
-    main()
