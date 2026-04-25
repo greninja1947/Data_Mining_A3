@@ -1,16 +1,6 @@
-"""
-models.py  –  GNN model definitions for COL761 Assignment 3.
-Imported by both train_*.py and predict.py so torch.save/load resolves classes.
-"""
-
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, SAGEConv
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dataset A: GATv2 node classifier (7-class, Accuracy)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class GATv2NodeClassifier(torch.nn.Module):
     def __init__(self, in_channels, hidden=256, heads=8, num_classes=7, dropout=0.6):
@@ -40,10 +30,6 @@ class NormalizedGATv2(torch.nn.Module):
         return self.base(x, edge_index)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Dataset B: Deep GATv2 node classifier (binary, ROC-AUC)
-# ─────────────────────────────────────────────────────────────────────────────
-
 class DeepGATv2(torch.nn.Module):
     def __init__(self, in_channels, hidden=256, heads=4, num_layers=4, dropout=0.5):
         super().__init__()
@@ -65,10 +51,6 @@ class DeepGATv2(torch.nn.Module):
             x = norm(x + h)
         return self.out(x).squeeze(-1)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dataset C: GraphSAGE + MLP decoder for link prediction (Hits@50)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class LinkPredictor(torch.nn.Module):
     def __init__(self, in_channels, hidden=256, num_layers=2, dropout=0.2):

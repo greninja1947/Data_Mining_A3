@@ -1,15 +1,3 @@
-"""
-model_C.py -- GNN architecture for COL761 A3 Q2 Dataset C (link prediction).
-
-The forward signature matches what `predict.py::predict_C` expects:
-
-    model(x, edge_index, edge_pairs) -> FloatTensor [E]
-
-i.e. given node features, the message-passing graph, and a batch of candidate
-edge pairs, return a score per pair. Internally: GraphSAGE encoder -> MLP
-decoder over concatenated endpoint embeddings (plan.md Graph C recipe).
-"""
-
 from __future__ import annotations
 
 import torch
@@ -21,23 +9,16 @@ class LinkPredictor(torch.nn.Module):
     def __init__(
         self,
         in_channels: int,
+        feature_mean: torch.Tensor,
+        feature_std: torch.Tensor,
         hidden: int = 256,
         num_layers: int = 2,
         dropout: float = 0.2,
-        feature_mean: torch.Tensor | None = None,
-        feature_std: torch.Tensor | None = None,
     ):
         super().__init__()
         self.dropout = dropout
-        self.hidden = hidden
-        self.num_layers = num_layers
-
-        if feature_mean is not None:
-            self.register_buffer("feature_mean", feature_mean)
-            self.register_buffer("feature_std", feature_std)
-        else:
-            self.feature_mean = None
-            self.feature_std = None
+        self.register_buffer("feature_mean", feature_mean)
+        self.register_buffer("feature_std", feature_std)
 
         convs: list[torch.nn.Module] = []
         convs.append(SAGEConv(in_channels, hidden))
@@ -53,8 +34,6 @@ class LinkPredictor(torch.nn.Module):
         )
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
-        if self.feature_mean is None:
-            return x
         return (x - self.feature_mean) / (self.feature_std + 1e-8)
 
     def encode(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
