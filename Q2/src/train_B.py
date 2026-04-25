@@ -97,7 +97,7 @@ def evaluate_auc(
 
 
 
-def main() -> None:
+def main(argv=None) -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--data_dir",   required=True)
     p.add_argument("--model_dir",  required=True)
@@ -121,7 +121,7 @@ def main() -> None:
 
     p.add_argument("--seed",      type=int, default=42)
     p.add_argument("--force_cpu", action="store_true")
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

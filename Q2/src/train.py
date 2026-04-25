@@ -31,7 +31,7 @@ def _train_a(args: argparse.Namespace) -> None:
             data_dir=args.data_dir,
             model_dir=args.model_dir,
             kerberos=args.kerberos,
-            time_limit=300.0,
+            time_limit=2700.0,
             hidden=16,
             heads=4,
             dropout=0.6,
@@ -44,6 +44,18 @@ def _train_a(args: argparse.Namespace) -> None:
     )
 
 
+def _train_b(args: argparse.Namespace) -> None:
+    import train_B
+
+    b_argv: list[str] = [
+        "--data_dir",  args.data_dir,
+        "--model_dir", args.model_dir,
+        "--kerberos",  args.kerberos,
+        "--time_limit", "3600.0",
+    ]
+    train_B.main(b_argv)
+
+
 def _train_c(args: argparse.Namespace) -> None:
     import train_C
 
@@ -51,7 +63,7 @@ def _train_c(args: argparse.Namespace) -> None:
         "--data_dir", args.data_dir,
         "--model_dir", args.model_dir,
         "--kerberos", args.kerberos,
-        "--time_limit", "7200.0",
+        "--time_limit", "5400.0",
     ]
     train_C.main(c_argv)
 
@@ -62,10 +74,10 @@ def main() -> None:
 
     if args.dataset == "A":
         _train_a(args)
+    elif args.dataset == "B":
+        _train_b(args)
     elif args.dataset == "C":
         _train_c(args)
-    else:
-        raise SystemExit("Dataset B training is not implemented in this dispatcher.")
 
 
 if __name__ == "__main__":
