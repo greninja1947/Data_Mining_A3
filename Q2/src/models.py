@@ -28,6 +28,18 @@ class GATv2NodeClassifier(torch.nn.Module):
         return self.lin(x)
 
 
+class NormalizedGATv2(torch.nn.Module):
+    def __init__(self, mean_x, std_x, base):
+        super().__init__()
+        self.register_buffer("mean_x", mean_x)
+        self.register_buffer("std_x", std_x)
+        self.base = base
+
+    def forward(self, x, edge_index):
+        x = (x - self.mean_x) / (self.std_x + 1e-7)
+        return self.base(x, edge_index)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dataset B: Deep GATv2 node classifier (binary, ROC-AUC)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,7 +71,7 @@ class DeepGATv2(torch.nn.Module):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class LinkPredictor(torch.nn.Module):
-    def __init__(self, in_channels, hidden=256, num_layers=3, dropout=0.3):
+    def __init__(self, in_channels, hidden=256, num_layers=2, dropout=0.2):
         super().__init__()
         self.convs = torch.nn.ModuleList()
         self.convs.append(SAGEConv(in_channels, hidden))

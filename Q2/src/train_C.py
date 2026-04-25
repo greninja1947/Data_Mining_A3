@@ -1,21 +1,8 @@
 """
 train_C.py -- trainer for COL761 A3 Q2 Dataset C (link prediction, Hits@50).
 
-Dataset C is small (~4k train edges, ~12k nodes, 47 MB features) so full-graph
-training is fine. The loop is wall-clock budgeted exactly like train_B.py: we
-check `--time_limit` between epochs and exit early, keeping the best val
-Hits@50 checkpoint. For grid-search efficiency, an optional patience timer
-(`--patience_sec`) can stop training early when validation Hits@K does not
-improve for a while.
-
-Negative sampling modes
------------------------
-    given   : use the provided `train_neg` edges every epoch (plan.md recipe)
-    random  : freshly sample uniform random negatives each epoch
-    mixed   : union of the above (2x negatives per pos)
-
-The checkpoint is saved with torch.save(model, path) so predict.py can load it
-back unmodified. Forward signature matches predict_C: model(x, edge_index, edges).
+The training loop is controlled by a wall-clock budget and keeps the best
+validation Hits@50 checkpoint at <kerberos>_model_C.pt.
 """
 
 from __future__ import annotations
@@ -27,7 +14,7 @@ import time
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+from tqdm import tqdm
 
 _here = os.path.dirname(os.path.abspath(__file__))
 if _here not in sys.path:
@@ -35,6 +22,15 @@ if _here not in sys.path:
 
 from load_dataset import load_dataset  # noqa: E402
 from model_C import LinkPredictor  # noqa: E402
+
+# Best config selected from grid search:
+# hidden=256, num_layers=2, lr=1e-3, dropout=0.2, weight_decay=0.0, neg_mode=mixed
+DEFAULT_HIDDEN = 256
+DEFAULT_NUM_LAYERS = 2
+DEFAULT_DROPOUT = 0.2
+DEFAULT_LR = 1e-3
+DEFAULT_WEIGHT_DECAY = 0.0
+DEFAULT_NEG_MODE = "mixed"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -102,7 +98,7 @@ def evaluate_val(model: LinkPredictor, x: torch.Tensor, edge_index: torch.Tensor
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     p.add_argument("--data_dir", required=True)
     p.add_argument("--model_dir", required=True)
@@ -110,16 +106,16 @@ def main() -> None:
     p.add_argument("--time_limit", type=float, default=60.0)
 
     # model
-    p.add_argument("--hidden", type=int, default=256)
-    p.add_argument("--num_layers", type=int, default=3)
-    p.add_argument("--dropout", type=float, default=0.3)
+    p.add_argument("--hidden", type=int, default=DEFAULT_HIDDEN)
+    p.add_argument("--num_layers", type=int, default=DEFAULT_NUM_LAYERS)
+    p.add_argument("--dropout", type=float, default=DEFAULT_DROPOUT)
 
     # optimization
-    p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--weight_decay", type=float, default=0.0)
+    p.add_argument("--lr", type=float, default=DEFAULT_LR)
+    p.add_argument("--weight_decay", type=float, default=DEFAULT_WEIGHT_DECAY)
     p.add_argument("--max_epochs", type=int, default=10_000)
     p.add_argument("--eval_every", type=int, default=5)
-    p.add_argument("--neg_mode", choices=["given", "random", "mixed"], default="mixed")
+    p.add_argument("--neg_mode", choices=["given", "random", "mixed"], default=DEFAULT_NEG_MODE)
     p.add_argument("--k", type=int, default=50)
     p.add_argument("--patience_sec", type=float, default=0.0)
     p.add_argument("--min_improve", type=float, default=0.0)
@@ -128,7 +124,11 @@ def main() -> None:
     # infra
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--force_cpu", action="store_true")
-    args = p.parse_args()
+    return p
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_arg_parser().parse_args(argv)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -204,6 +204,7 @@ def main() -> None:
     best_hits = -1.0
     best_epoch = -1
     last_improve_t: float | None = None
+    last_hits: float | None = None
 
     def budget_left() -> float:
         return args.time_limit - (time.time() - t0)
@@ -215,11 +216,27 @@ def main() -> None:
         model_cpu = model.to("cpu")
         torch.save(model_cpu, save_path)
         model.to(device)
-        print(f"[ckpt] saved best model to {save_path}  (Hits@{args.k}={h:.4f})",
-              flush=True)
+
+    def update_progress(pbar: tqdm, loss_value: float | None = None) -> None:
+        pbar.n = min(time.time() - t0, args.time_limit)
+        postfix = {"epoch": epoch}
+        if loss_value is not None:
+            postfix["loss"] = f"{loss_value:.4f}"
+        if last_hits is not None:
+            postfix[f"H@{args.k}"] = f"{last_hits:.4f}"
+        if best_hits >= 0:
+            postfix["best"] = f"{best_hits:.4f}@{best_epoch}"
+        pbar.set_postfix(postfix)
 
     epoch = 0
     stopped_reason = "max_epochs"
+    pbar = tqdm(
+        total=max(1, int(args.time_limit)),
+        desc="Training C",
+        unit="s",
+        dynamic_ncols=True,
+        bar_format="{l_bar}{bar}| {n:.0f}/{total}s [{elapsed}<{remaining}] {postfix}",
+    )
     try:
         while epoch < args.max_epochs:
             if budget_left() <= 0:
@@ -231,11 +248,6 @@ def main() -> None:
                 and (time.time() - last_improve_t) >= args.patience_sec
             ):
                 stopped_reason = "no_improve_patience"
-                print(
-                    f"[stop] no val improvement for {args.patience_sec:.0f}s; "
-                    f"stopping early",
-                    flush=True,
-                )
                 break
             epoch += 1
             model.train()
@@ -271,25 +283,22 @@ def main() -> None:
             optimizer.step()
 
             if epoch % args.eval_every == 0 or budget_left() <= 0:
-                hits, avg_pos = evaluate_val(
+                hits, _ = evaluate_val(
                     model, x_dev, ei_dev, valid_pos, valid_neg, device,
                     k=args.k,
                 )
-                print(f"[epoch {epoch:04d}] loss={loss.item():.4f}  "
-                      f"avg_pos_logit={avg_pos:+.3f}  "
-                      f"Hits@{args.k}={hits:.4f}  "
-                      f"(best={best_hits:.4f}@{best_epoch})  "
-                      f"elapsed={time.time() - t0:.1f}s/{args.time_limit:.0f}s",
-                      flush=True)
+                last_hits = hits
                 if hits > (best_hits + args.min_improve):
                     save_best(hits, epoch)
                     last_improve_t = time.time()
+                update_progress(pbar, loss.item())
             elif args.log_every > 0 and epoch % args.log_every == 0:
-                print(f"[epoch {epoch:04d}] loss={loss.item():.4f}  "
-                      f"elapsed={time.time() - t0:.1f}s/{args.time_limit:.0f}s",
-                      flush=True)
+                update_progress(pbar, loss.item())
     except KeyboardInterrupt:
         stopped_reason = "keyboard_interrupt"
+    finally:
+        pbar.n = min(args.time_limit, time.time() - t0)
+        pbar.close()
 
     if best_hits < 0:
         print("[ckpt] no validation Hits measured; saving current weights as fallback",
@@ -299,7 +308,7 @@ def main() -> None:
 
     print(f"[done] stop_reason={stopped_reason}  epochs={epoch}  "
           f"best_val_hits@{args.k}={best_hits:.4f}@{best_epoch}  "
-          f"wall_time={time.time() - t0:.1f}s", flush=True)
+          f"wall_time={time.time() - t0:.1f}s  model={save_path}", flush=True)
 
 
 if __name__ == "__main__":

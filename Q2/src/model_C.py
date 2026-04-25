@@ -22,8 +22,8 @@ class LinkPredictor(torch.nn.Module):
         self,
         in_channels: int,
         hidden: int = 256,
-        num_layers: int = 3,
-        dropout: float = 0.3,
+        num_layers: int = 2,
+        dropout: float = 0.2,
         feature_mean: torch.Tensor | None = None,
         feature_std: torch.Tensor | None = None,
     ):
