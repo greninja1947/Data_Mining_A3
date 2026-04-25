@@ -17,7 +17,7 @@ You are given **3 graphs** and must train a GNN model on each. The grading is **
 ## What Are We Supposed to Do?
 
 1. **Train a GNN model** on each graph using the provided training data.
-2. **Save the model** as `cs1230459_model_A.pt`, `cs1230459_model_B.pt`, `cs1230459_model_C.pt`.
+2. **Save the model** as `cs1230459_model_A.pt`, `cs1230216_model_B.pt`, `cs1230459_model_C.pt`.
 3. **Generate predictions** on test data using `predict.py`.
 4. **Submit** the code in the required directory structure.
 
@@ -39,7 +39,7 @@ python load_dataset.py --dataset C --data_dir /path/to/public_datasets
 ### Step 2: Train Your Model
 Write your training script (e.g., `train_A.py`, `train_B.py`, `train_C.py`).
 Save the trained model as: `<kerberos>_model_<dataset>.pt`
-Example: `cs1230459_model_A.pt`
+Example: `cs1230216_model_B.pt`
 
 ### Step 3: Generate Predictions
 ```bash
@@ -48,7 +48,7 @@ python predict.py --dataset A --task node \
   --data_dir /path/to/public_datasets \
   --model_path /path/to/models/ \
   --output_dir /path/to/outputs \
-  --kerberos cs1230459
+  --kerberos cs1230216
 
 # Link prediction (C):
 python predict.py --dataset C --task link \
