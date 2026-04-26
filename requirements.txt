@@ -49,10 +49,10 @@ setuptools==82.0.1
 six==1.17.0
 sympy==1.14.0
 threadpoolctl==3.6.0
-torch==2.7.1+cu118
+torch==2.7.1
 torch-geometric==2.7.0
-torchaudio==2.7.1+cu118
-torchvision==0.22.1+cu118
+torchaudio==2.7.1
+torchvision==0.22.1
 tqdm==4.67.3
 triton==3.3.1
 typing_extensions==4.15.0
